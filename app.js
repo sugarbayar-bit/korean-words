@@ -5,7 +5,8 @@
   const cfg = window.APP_CONFIG || {};
   const configured = !!(cfg.SUPABASE_URL && cfg.SUPABASE_KEY &&
     !cfg.SUPABASE_URL.includes("YOUR-PROJECT") && !cfg.SUPABASE_KEY.includes("YOUR-"));
-  const sb = configured && window.supabase ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_KEY) : null;
+  const SB_URL = String(cfg.SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
+  const sb = configured && window.supabase ? window.supabase.createClient(SB_URL, cfg.SUPABASE_KEY.trim()) : null;
   const DEMO = !sb;
 
   const SETUP_KEY = "kw_setup_v1";
@@ -23,6 +24,8 @@
       readJSON(SETUP_KEY, {})
     ),
     test: null,
+    settings: { meaning: "en" },
+    browse: { catId: null, search: "" },
     manage: { filterCat: "", search: "", renaming: null, draft: emptyDraft(), busy: false },
   };
 
@@ -55,6 +58,7 @@
     if (lang === "mn") return mn || en;
     return [en, mn].filter(Boolean).join(" · ");
   }
+  const pref = () => state.settings.meaning || "en";
   const parseSyn = (s) => String(s || "").split(/[,，、;]/).map((x) => x.trim()).filter(Boolean);
   const synSet = (w) => new Set((w.synonyms || []).map(norm).filter(Boolean));
 
@@ -90,10 +94,12 @@
       state.categories = d.categories; state.words = d.words; state.loaded = true;
       render(); return;
     }
-    const [c, w] = await Promise.all([
+    const [c, w, st] = await Promise.all([
       sb.from("categories").select("*").order("name"),
       sb.from("words").select("*").order("created_at", { ascending: false }),
+      sb.from("settings").select("*"),
     ]);
+    if (!st.error && st.data) st.data.forEach((r) => { if (r.key === "meaning") state.settings.meaning = r.value; });
     if (c.error || w.error) state.error = (c.error || w.error).message;
     else { state.categories = c.data; state.words = w.data; state.error = null; }
     state.loaded = true;
@@ -183,7 +189,7 @@
         if (s.count !== "all") list = list.slice(0, s.count);
       }
     }
-    const qs = list.map((w) => buildQuestion(w, s.dir, s.lang, pool)).filter(Boolean);
+    const qs = list.map((w) => buildQuestion(w, s.dir, pref(), pool)).filter(Boolean);
     if (!qs.length) {
       toast(pool.length < 4 ? "You need at least 4 words to make a test" : "No words in the chosen categories");
       return;
@@ -196,7 +202,7 @@
   // ---------- Rendering ----------
   function render() {
     document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
-    ["test", "stats", "manage"].forEach((v) => { document.getElementById("view-" + v).hidden = v !== state.view; });
+    ["test", "words", "stats", "manage"].forEach((v) => { document.getElementById("view-" + v).hidden = v !== state.view; });
     document.getElementById("authBadge").textContent = DEMO ? "demo" : state.user ? "owner" : "";
     const el = document.getElementById("view-" + state.view);
     if (!state.loaded) { el.innerHTML = `<div class="card center muted">Loading…</div>`; return; }
@@ -206,6 +212,7 @@
       return;
     }
     if (state.view === "test") el.innerHTML = renderTest();
+    if (state.view === "words") el.innerHTML = renderWords();
     if (state.view === "stats") el.innerHTML = renderStats();
     if (state.view === "manage") { el.innerHTML = renderManage(); updateDraftHints(); }
   }
@@ -232,7 +239,7 @@
       const ok = q.answered === q.correctIndex;
       const w = q.word;
       const extra = [
-        `<b>${esc(w.korean)}</b> = ${esc(meaningOf(w, "both"))}`,
+        `<b>${esc(w.korean)}</b> = ${esc(meaningOf(w, pref()))}`,
         (w.synonyms || []).length ? `Synonyms: ${esc(w.synonyms.join(", "))}` : "",
         w.note ? esc(w.note) : "",
       ].filter(Boolean).join("<br>");
@@ -271,8 +278,6 @@
       </div>
       <h3>Direction</h3>
       ${seg("dir", [["ko2m", "한국어 → Meaning"], ["m2ko", "Meaning → 한국어"], ["mixed", "Mixed"]])}
-      <h3>Meaning language</h3>
-      ${seg("lang", [["en", "English"], ["mn", "Монгол"], ["both", "Both"]])}
       <h3>Questions</h3>
       ${seg("count", [[10, "10"], [20, "20"], [30, "30"], ["all", "All"]])}
       <h3>Mode</h3>
@@ -293,9 +298,43 @@
       <p>${msg}</p>
     </div>
     ${uniq.length ? `<div class="card"><h2>Mistakes (${uniq.length})</h2><ul class="list">
-      ${uniq.map((w) => `<li><div class="main"><div class="ko">${esc(w.korean)}</div><div class="mean">${esc(meaningOf(w, "both"))}</div></div></li>`).join("")}
+      ${uniq.map((w) => `<li><div class="main"><div class="ko">${esc(w.korean)}</div><div class="mean">${esc(meaningOf(w, pref()))}</div></div></li>`).join("")}
     </ul><button class="btn primary block" style="margin-top:10px" data-action="retry-mistakes">Retry these mistakes</button></div>` : ""}
     <div class="row"><button class="btn grow" data-action="quit">New test</button><button class="btn primary grow" data-action="start">Same settings again</button></div>`;
+  }
+
+  function renderWords() {
+    const b = state.browse;
+    if (!state.categories.length) return demoBanner() + `<div class="card center muted">No categories yet.</div>`;
+    const counts = {};
+    state.words.forEach((w) => { counts[w.category_id] = (counts[w.category_id] || 0) + 1; });
+    const cat = state.categories.find((c) => c.id === b.catId);
+    if (!cat) {
+      return demoBanner() + `<div class="card"><h2>Categories</h2><ul class="list">
+        ${state.categories.map((c) => `<li class="clickable" data-action="browse-cat" data-id="${c.id}">
+          <div class="main"><div class="ko" style="font-size:17px">${esc(c.name)}</div><div class="mean">${counts[c.id] || 0} words</div></div>
+          <span class="chev">›</span></li>`).join("")}
+      </ul></div>`;
+    }
+    const q = norm(b.search);
+    const words = state.words
+      .filter((w) => w.category_id === cat.id)
+      .filter((w) => !q || [w.korean, w.english, w.mongolian, (w.synonyms || []).join(" ")].some((x) => norm(x).includes(q)))
+      .sort((a, c) => a.korean.localeCompare(c.korean, "ko"));
+    return `<button class="btn small" style="margin-bottom:12px" data-action="browse-back">‹ All categories</button>
+    <div class="card">
+      <h2>${esc(cat.name)} <span class="muted" style="font-weight:400">(${counts[cat.id] || 0})</span></h2>
+      <input type="search" data-input="browse-search" value="${esc(b.search)}" placeholder="Search in this category…">
+      <ul class="list" style="margin-top:8px">
+        ${words.map((w) => `<li><div class="main">
+          <div class="ko">${esc(w.korean)}</div>
+          <div class="mean">${esc(meaningOf(w, pref())) || "<i>no meaning</i>"}</div>
+          ${(w.synonyms || []).length ? `<div class="syn">≈ ${esc(w.synonyms.join(", "))}</div>` : ""}
+          ${w.note ? `<div class="note">${esc(w.note)}</div>` : ""}
+        </div></li>`).join("") || `<li class="muted">No words found.</li>`}
+      </ul>
+      ${(counts[cat.id] || 0) >= 1 ? `<button class="btn primary block" style="margin-top:12px" data-action="browse-test">Test this category ▶</button>` : ""}
+    </div>`;
   }
 
   function renderStats() {
@@ -323,7 +362,7 @@
     <div class="card">
       <h2>Most-missed words</h2>
       ${rows.length ? `<ul class="list">${rows.slice(0, 50).map(({ w, r }) => `<li>
-          <div class="main"><div class="ko">${esc(w.korean)}</div><div class="mean">${esc(meaningOf(w, "both"))}</div></div>
+          <div class="main"><div class="ko">${esc(w.korean)}</div><div class="mean">${esc(meaningOf(w, pref()))}</div></div>
           <span class="pill bad">✗ ${r.wrong}</span><span class="pill good">✓ ${r.right}</span>
           <button class="iconbtn" title="Reset this word" data-action="reset-word" data-id="${w.id}">↺</button>
         </li>`).join("")}</ul>
@@ -409,6 +448,14 @@
           <button class="iconbtn" data-action="delete-cat" data-id="${c.id}" title="Delete">🗑️</button></li>`).join("")}
       </ul>
     </div>
+    <div class="card">
+      <h2>Display settings</h2>
+      <p class="muted" style="margin-top:-6px">Which meaning to show in tests, the Words tab and stats. Applies to everyone who uses the app.</p>
+      <div class="seg">${[["en", "English first"], ["mn", "Mongolian first"], ["both", "Both"]].map(([v, l]) =>
+        `<button data-action="set-meaning" data-val="${v}" class="${pref() === v ? "on" : ""}">${l}</button>`).join("")}</div>
+      <p class="muted" style="font-size:13px;margin:8px 0 0">${pref() === "en" ? "Shows only English. If a word has no English, shows Mongolian."
+        : pref() === "mn" ? "Shows only Mongolian. If a word has no Mongolian, shows English." : "Shows English · Mongolian together."}</p>
+    </div>
     <button class="btn block" data-action="logout">Log out</button>`;
   }
 
@@ -448,6 +495,24 @@
       writeJSON(SETUP_KEY, state.setup); render();
     },
     start() { startTest(); },
+    "browse-cat"(el) { state.browse.catId = Number(el.dataset.id); state.browse.search = ""; render(); window.scrollTo(0, 0); },
+    "browse-back"() { state.browse.catId = null; render(); window.scrollTo(0, 0); },
+    "browse-test"() {
+      state.setup.catIds = [state.browse.catId]; state.setup.mode = "normal"; writeJSON(SETUP_KEY, state.setup);
+      state.view = "test"; state.test = null; startTest();
+    },
+    async "set-meaning"(el) {
+      const v = el.dataset.val, old = pref();
+      if (v === old) return;
+      readDraftFromForm();
+      state.settings.meaning = v; render();
+      if (DEMO) return;
+      const { error } = await sb.from("settings").upsert({ key: "meaning", value: v });
+      if (error) {
+        state.settings.meaning = old; readDraftFromForm(); render();
+        toast(/settings/i.test(error.message) ? "Run update-v2.sql in Supabase first" : error.message);
+      } else toast("Saved for everyone");
+    },
     answer(el) {
       const t = state.test, q = t.questions[t.i];
       if (q.answered !== null) return;
@@ -593,11 +658,13 @@
   document.addEventListener("input", (e) => {
     const t = e.target;
     if (t.closest('form[data-form="word"]')) { readDraftFromForm(); updateDraftHints(); return; }
-    if (t.dataset.input === "search") {
-      state.manage.search = t.value;
+    if (t.dataset.input === "search" || t.dataset.input === "browse-search") {
+      const key = t.dataset.input;
+      if (key === "search") { state.manage.search = t.value; readDraftFromForm(); }
+      else state.browse.search = t.value;
       const pos = t.selectionStart;
-      readDraftFromForm(); render();
-      const s = document.querySelector('[data-input="search"]');
+      render();
+      const s = document.querySelector(`[data-input="${key}"]`);
       if (s) { s.focus(); s.setSelectionRange(pos, pos); }
     }
   });
