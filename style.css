@@ -147,3 +147,6 @@ button { font: inherit; cursor: pointer; }
   opacity: 0; pointer-events: none; transition: all .2s; max-width: 90vw; z-index: 20;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.list .note { font-size: 13px; color: var(--text); opacity: .8; margin-top: 2px; }
+.chev { font-size: 22px; color: var(--muted); padding: 0 4px; }
