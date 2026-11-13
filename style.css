@@ -88,7 +88,9 @@ button { font: inherit; cursor: pointer; }
 /* Quiz */
 .progress { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 4px 0 12px; }
 .progress > div { height: 100%; background: var(--primary); transition: width .25s; }
-.qmeta { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+.qmeta { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }
+.quitx { border: 0; background: transparent; color: var(--muted); font-size: 15px; width: 30px; height: 30px; border-radius: 50%; margin: -6px -8px -6px 0; }
+.quitx:active { background: var(--line); }
 .prompt { text-align: center; padding: 26px 8px 22px; }
 .prompt .label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .prompt .word { font-size: 34px; font-weight: 700; word-break: keep-all; overflow-wrap: anywhere; }
