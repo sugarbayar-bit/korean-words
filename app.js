@@ -248,7 +248,8 @@
         <button class="btn primary block" style="margin-top:12px" data-action="next">${t.i + 1 < t.questions.length ? "Next →" : "See results"}</button>`;
     }
     return `<div class="card">
-      <div class="qmeta"><span>Question ${t.i + 1} / ${t.questions.length}</span><span>Score ${t.score}</span></div>
+      <div class="qmeta"><span>Question ${t.i + 1} / ${t.questions.length} · Score ${t.score}</span>
+        <button class="quitx" data-action="quit-test" aria-label="Quit test">✕</button></div>
       <div class="progress"><div style="width:${(t.i / t.questions.length) * 100}%"></div></div>
       <div class="prompt"><div class="label">${label}</div><div class="word${long}">${esc(q.prompt)}</div></div>
       <div class="choices">${q.choices.map((c, i) => {
@@ -257,8 +258,7 @@
         return `<button class="choice ${cls}" data-action="answer" data-i="${i}" ${answered ? "disabled" : ""}><span class="n">${i + 1}</span><span>${esc(c)}</span></button>`;
       }).join("")}</div>
       ${fb}
-    </div>
-    <button class="btn block" data-action="quit">Quit test</button>`;
+    </div>`;
   }
 
   function renderSetup() {
@@ -528,6 +528,9 @@
       render(); window.scrollTo(0, 0);
     },
     quit() { state.test = null; render(); },
+    "quit-test"() {
+      if (confirm("Quit this test? Your progress in this test will be lost.")) { state.test = null; render(); }
+    },
     "retry-mistakes"() { startTest([...new Map(state.test.mistakes.map((w) => [w.id, w])).values()]); },
     "practice-weak"() { state.setup.mode = "weak"; writeJSON(SETUP_KEY, state.setup); state.view = "test"; startTest(); },
     "reset-word"(el) { const s = loadStats(); delete s[el.dataset.id]; writeJSON(STATS_KEY, s); render(); toast("Word reset"); },
